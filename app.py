@@ -145,8 +145,9 @@ pagina = st.sidebar.radio('¿Qué quieres conocer?', [
     '🏠 Resumen para inversionistas',
     '📈 Conoce cada metal',
     '🔮 ¿Qué puede pasar?',
-    '⚖️ Compara las alternativas',
-    '🎓 Cómo hicimos el análisis'
+    '⚖️ Riesgos y simulador',
+    '🎯 Nuestra recomendación',
+    '🎓 Análisis académico'
 ])
 metal = st.sidebar.selectbox('Metal que quieres analizar', list(COLUMNAS))
 ventana = 12
@@ -194,6 +195,38 @@ def figura_indice(meses):
     return fig
 
 
+@st.cache_data(show_spinner=False)
+def comparacion_general(df):
+    registros=[]
+    for m in COLUMNAS:
+        sm=serie_metal(df,m)
+        rr=resultados_metal(sm)
+        if rr is None:
+            continue
+        vol=float(sm.pct_change(fill_method=None).tail(60).std()*100)
+        registros.append({'Metal':m,'Último precio':float(sm.iloc[-1]),
+            'Unidad':UNIDADES[m], 'Modelo':rr['modelo'],
+            'Error a 1 mes (%)':rr['error'],
+            '3 meses (%)':rr['variaciones'][3],
+            '6 meses (%)':rr['variaciones'][6],
+            '12 meses (%)':rr['variaciones'][12],
+            'Fluctuación mensual (%)':vol})
+    return pd.DataFrame(registros)
+
+
+def mostrar_barras(tabla, plazo):
+    col=f'{plazo} meses (%)'
+    orden=tabla.sort_values(col)
+    fig=go.Figure(go.Bar(x=orden[col],y=orden['Metal'],orientation='h',
+        text=[f'{v:+.2f}%' for v in orden[col]],textposition='outside',
+        marker_color=['#1a9b7a' if v>=0 else '#d76767' for v in orden[col]]))
+    fig.add_vline(x=0,line_color='gray')
+    fig.update_layout(title=f'Cambio estimado de precio en {plazo} meses',
+        xaxis_title='Variación respecto al último precio observado (%)',
+        margin=dict(l=20,r=95,t=55,b=35),height=385)
+    st.plotly_chart(fig,use_container_width=True)
+
+
 if pagina == '🏠 Resumen para inversionistas':
     st.title('⛏️ ¿En qué metal podríamos invertir?')
     st.write('Conoce los precios, identifica los movimientos y compara las perspectivas de cinco metales.')
@@ -221,7 +254,7 @@ elif pagina == '📈 Conoce cada metal':
     b.metric('Cambio en el último mes', f'{mes:+.2f}%')
     c.metric('Cambio en seis meses', f'{seis:+.2f}%')
     st.caption(f'Precio en {UNIDADES[metal]}. Fecha del último registro: {s.index[-1]:%m/%Y}.')
-    lapso = st.radio('¿Qué periodo deseas ver?', ['Últimos 12 meses','Últimos 5 años','Todo el historial'], horizontal=True)
+    lapso = st.radio('¿Qué periodo deseas ver?', ['Últimos 5 años','Últimos 12 meses','Todo el historial'], horizontal=True)
     n = {'Últimos 12 meses':12,'Últimos 5 años':60,'Todo el historial':len(s)}[lapso]
     st.plotly_chart(grafico_linea(s, f'Historia del precio del {metal.lower()}', UNIDADES[metal], n), use_container_width=True)
     st.success(f'En los últimos seis meses hubo una {lenguaje_cambio(seis)} del precio ({seis:+.1f}%).')
@@ -263,41 +296,66 @@ elif pagina == '🔮 ¿Qué puede pasar?':
         st.plotly_chart(f,use_container_width=True)
         st.caption('Cuando ambas líneas se acercan, el modelo se aproximó mejor al precio real.')
 
-elif pagina == '⚖️ Compara las alternativas':
-    st.title('⚖️ Compara los cinco metales')
-    st.write('Mira sus posibles cambios de precio y las fluctuaciones que tuvieron en el pasado.')
-    registros=[]
-    with st.spinner('Comparando los cinco metales...'):
-        for m in COLUMNAS:
-            sm=serie_metal(datos,m)
-            rr=resultados_metal(sm)
-            if rr:
-                registros.append({'Metal':m,'Cambio previsto a 3 meses (%)':rr['variaciones'][3],
-                                  'Cambio previsto a 6 meses (%)':rr['variaciones'][6],
-                                  'Cambio previsto a 12 meses (%)':rr['variaciones'][12],
-                                  'Fluctuación histórica mensual (%)':float(sm.pct_change(fill_method=None).std()*100),
-                                  'Modelo utilizado':rr['modelo'], 'Error histórico a 1 mes (%)':rr['error']})
-    tabla=pd.DataFrame(registros)
-    plazo=st.radio('¿Cuándo piensas comparar?', ['3 meses','6 meses','12 meses'],index=1,horizontal=True)
-    columna=f'Cambio previsto a {plazo} (%)'
-    orden=tabla.sort_values(columna)
-    fig=go.Figure(go.Bar(x=orden[columna],y=orden['Metal'],orientation='h',text=[f'{v:+.1f}%' for v in orden[columna]],textposition='outside'))
-    fig.add_vline(x=0,line_color='gray')
-    fig.update_layout(title=f'Cambios de precio estimados a {plazo}',xaxis_title='Cambio proyectado (%)',height=400)
-    st.plotly_chart(fig,use_container_width=True)
-    st.caption('Barras a la derecha de cero: aumento estimado; a la izquierda: disminución estimada.')
-    st.subheader('¿Cuáles han tenido más altibajos?')
-    f=px.bar(tabla.sort_values('Fluctuación histórica mensual (%)'),x='Fluctuación histórica mensual (%)',y='Metal',orientation='h',
-             title='Variación de los cambios mensuales: mayor barra = más fluctuaciones')
-    f.update_layout(height=390)
+elif pagina == '⚖️ Riesgos y simulador':
+    st.title('⚖️ ¿Cuánto podría ganar o perder si cambia el precio?')
+    st.write('Explora el cambio de valor de una inversión hipotética. No incluye comisiones, impuestos, diferencias de compra y venta ni otros costos.')
+    tabla=comparacion_general(datos)
+    if tabla.empty:
+        st.warning('No se pudieron calcular comparaciones.')
+        st.stop()
+    st.subheader('¿Qué metal ha tenido más altibajos?')
+    f=px.bar(tabla.sort_values('Fluctuación mensual (%)'),
+        x='Fluctuación mensual (%)',y='Metal',orientation='h',
+        text='Fluctuación mensual (%)',
+        title='Movimientos de precios durante los últimos cinco años')
+    f.update_traces(texttemplate='%{text:.2f}%',textposition='outside')
+    f.update_layout(height=365,xaxis_title='Fluctuación mensual típica (%)',margin=dict(r=80))
     st.plotly_chart(f,use_container_width=True)
-    st.info('Una subida proyectada alta puede venir acompañada de fuertes fluctuaciones. Esta comparación no incluye comisiones, impuestos ni todos los riesgos de inversión.')
-    with st.expander('Ver cifras y descargar comparación'):
-        st.dataframe(tabla.style.format({c:'{:+.2f}%' for c in tabla.columns if '(%)' in c}),hide_index=True,use_container_width=True)
-        st.download_button('Descargar comparación CSV',tabla.to_csv(index=False).encode('utf-8-sig'),'comparacion_metales.csv','text/csv')
+    st.caption('Una barra más larga indica movimientos mensuales históricamente más grandes; no mide todas las formas de riesgo.')
+    st.subheader('🧮 Simula una inversión')
+    a,b,c=st.columns(3)
+    capital=a.number_input('Capital en dólares (US$)',min_value=100.0,max_value=100000000.0,value=10000.0,step=500.0)
+    elegido=b.selectbox('Metal para simular',list(tabla['Metal']))
+    plazo=c.selectbox('Plazo', [3,6,12],index=1,format_func=lambda n:f'{n} meses')
+    variacion=float(tabla.set_index('Metal').loc[elegido,f'{plazo} meses (%)'])
+    escenario=st.radio('¿Qué escenario quieres observar?',
+        ['Pronóstico del modelo','Si el precio sube 5%','Si el precio baja 5%'],horizontal=True)
+    tasa={'Pronóstico del modelo':variacion,'Si el precio sube 5%':5.0,'Si el precio baja 5%':-5.0}[escenario]
+    valor=capital*(1+tasa/100)
+    x,y,z=st.columns(3)
+    x.metric('Capital inicial',f'US$ {capital:,.2f}')
+    y.metric('Valor estimado',f'US$ {valor:,.2f}')
+    z.metric('Cambio estimado',f'US$ {valor-capital:+,.2f}',f'{tasa:+.2f}%',delta_color='off')
+    if escenario=='Pronóstico del modelo':
+        st.info(f'El modelo {tabla.set_index("Metal").loc[elegido,"Modelo"]} estima un cambio de precio de {variacion:+.2f}% para {elegido.lower()} en {plazo} meses. Es una simulación, no una rentabilidad garantizada.')
+    else:
+        st.info('Este es un escenario hipotético de sensibilidad, no un pronóstico estadístico.')
+    st.caption('El cálculo supone que el valor de la inversión cambia en la misma proporción que el precio del metal. No considera la forma de inversión ni sus costos.')
+
+elif pagina == '🎯 Nuestra recomendación':
+    st.title('🎯 ¿Qué alternativa merece una evaluación más detallada?')
+    st.write('Comparamos crecimiento proyectado y fluctuaciones históricas para apoyar una decisión, no para prometer resultados.')
+    tabla=comparacion_general(datos)
+    if tabla.empty:
+        st.warning('No hay información suficiente para comparar.')
+        st.stop()
+    plazo=st.radio('Horizonte que desea evaluar', [3,6,12],index=1,horizontal=True,format_func=lambda n:f'{n} meses')
+    mostrar_barras(tabla,plazo)
+    st.subheader('Comparación sencilla')
+    mostrar=tabla[['Metal','Modelo',f'{plazo} meses (%)','Fluctuación mensual (%)']].copy()
+    mostrar.columns=['Metal','Método de pronóstico','Cambio estimado (%)','Fluctuación histórica mensual (%)']
+    st.dataframe(mostrar.style.format({'Cambio estimado (%)':'{:+.2f}%',
+        'Fluctuación histórica mensual (%)':'{:.2f}%'}),hide_index=True,use_container_width=True)
+    orden=tabla.sort_values(f'{plazo} meses (%)',ascending=False)
+    primero=orden.iloc[0]
+    st.info(f'**Mayor crecimiento de precio proyectado a {plazo} meses:** {primero["Metal"]} ({primero[f"{plazo} meses (%)"]:+.2f}%). Esto es solo un criterio de comparación, no una recomendación automática de compra.')
+    st.warning('Antes de invertir, evalúe el riesgo de caídas, el costo de comprar y vender, el tipo de instrumento, su plazo y la incertidumbre del pronóstico. Los errores históricos fueron medidos a un mes, no a todo el horizonte elegido.')
+    with st.expander('Descargar comparación para la exposición'):
+        st.download_button('Descargar CSV',tabla.to_csv(index=False).encode('utf-8-sig'),
+            'comparacion_gerencial_metales.csv','text/csv')
 
 else:
-    st.title('🎓 ¿Cómo obtuvimos estos resultados?')
+    st.title('🎓 Análisis académico: ¿cómo obtuvimos los resultados?')
     st.write('Esta sección es para explicar los procedimientos estudiados en clase. No es necesario mostrarla al público general.')
     st.subheader(f'Descomposición clásica del {metal.lower()}')
     tipo=st.radio('Tipo de descomposición',['Aditiva','Multiplicativa'],horizontal=True)
@@ -329,4 +387,3 @@ else:
     faltantes=datos[metal].loc[datos[metal].first_valid_index():datos[metal].last_valid_index()].isna().sum()
     st.caption(f'Meses internos sin precio original: {faltantes}. Si existen, se interpolan para el análisis.')
 
-st.divider()
