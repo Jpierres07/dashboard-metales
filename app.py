@@ -414,6 +414,44 @@ elif pagina == '⚖️ Riesgos y simulador':
     f.update_layout(height=365,xaxis_title='Fluctuación mensual típica (%)',margin=dict(r=80))
     st.plotly_chart(f,use_container_width=True)
     st.caption('Una barra más larga indica movimientos mensuales históricamente más grandes; no mide todas las formas de riesgo.')
+    st.subheader('📅 ¿Qué meses han sido más favorables históricamente?')
+    st.write('Comparamos los cambios porcentuales mensuales históricos; esto no predice ganancias futuras.')
+    e1, e2 = st.columns(2)
+    metal_mes = e1.selectbox('Metal para analizar', list(COLUMNAS), index=list(COLUMNAS).index(metal), key='mes_metal')
+    anos_mes = e2.selectbox('Periodo histórico', [5, 10, 15, 20], index=1, format_func=lambda n: f'Últimos {n} años')
+    serie_mes = serie_metal(datos, metal_mes).dropna()
+    corte_mes = serie_mes.index.max() - pd.DateOffset(years=anos_mes)
+    serie_mes = serie_mes.loc[serie_mes.index >= corte_mes]
+    cambios_mes = serie_mes.pct_change(fill_method=None).mul(100).replace([np.inf, -np.inf], np.nan).dropna()
+    if len(cambios_mes) >= 24:
+        df_mes = pd.DataFrame({'Mes_num': cambios_mes.index.month, 'Cambio': cambios_mes.values})
+        resumen_mes = df_mes.groupby('Mes_num')['Cambio'].agg(Media='mean', Mediana='median', Anos='count')
+        resumen_mes['Frecuencia_subida'] = df_mes.groupby('Mes_num')['Cambio'].apply(lambda x: (x > 0).mean() * 100)
+        resumen_mes = resumen_mes.reindex(range(1, 13))
+        resumen_mes['Mes'] = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic']
+        graf_mes = px.bar(resumen_mes, x='Mes', y='Media', color='Media',
+            color_continuous_scale='RdYlGn', color_continuous_midpoint=0,
+            title=f'Variación mensual promedio del {metal_mes.lower()}')
+        graf_mes.add_hline(y=0, line_color='gray')
+        graf_mes.update_layout(height=380, coloraxis_showscale=False,
+            yaxis_title='Cambio del precio respecto al mes anterior (%)')
+        st.plotly_chart(graf_mes, use_container_width=True)
+        st.caption('Cada barra muestra el cambio promedio del precio desde el mes anterior. No representa una ganancia garantizada.')
+        st.dataframe(resumen_mes[['Mes', 'Media', 'Mediana', 'Frecuencia_subida', 'Anos']].rename(columns={
+            'Media': 'Cambio medio (%)', 'Mediana': 'Cambio mediano (%)',
+            'Frecuencia_subida': 'Años con subida (%)', 'Anos': 'Observaciones'
+        }).style.format({'Cambio medio (%)': '{:+.2f}%', 'Cambio mediano (%)': '{:+.2f}%',
+                         'Años con subida (%)': '{:.0f}%'}), hide_index=True, use_container_width=True)
+        vigilar_mes = resumen_mes[(resumen_mes['Anos'] >= 5) & (resumen_mes['Media'] > 0) &
+            (resumen_mes['Mediana'] > 0) & (resumen_mes['Frecuencia_subida'] > 50)]
+        if len(vigilar_mes):
+            st.info('Meses que merecen seguimiento según los datos históricos: **' +
+                ', '.join(vigilar_mes['Mes']) + '**. Tuvieron media y mediana positivas y subieron en más de la mitad de los años observados.')
+        else:
+            st.info('No se encontraron meses con señales históricas positivas consistentes bajo estos criterios.')
+        st.warning('Un patrón histórico no indica cuándo comprar con seguridad. Hay que considerar precio actual, costos, riesgo y contexto económico; estos patrones no se han validado como estrategia de inversión.')
+    else:
+        st.info('No hay datos suficientes para analizar patrones mensuales.')
     st.subheader('🧮 Simula una inversión')
     a,b,c=st.columns(3)
     capital=a.number_input('Capital en dólares (US$)',min_value=100.0,max_value=100000000.0,value=10000.0,step=500.0)
