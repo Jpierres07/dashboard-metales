@@ -128,163 +128,207 @@ def grafico_linea(s, titulo, unidad, ultimos=120):
     fig.update_layout(title=titulo, xaxis_title='Mes', yaxis_title=unidad, template='plotly_white', height=430)
     return fig
 
-st.sidebar.title('⛏️ Observatorio minero')
-archivo = st.sidebar.file_uploader('Cargar CSV (opcional)', type=['csv'])
+
+from pathlib import Path
+
+st.sidebar.title('⛏️ Metales para invertir')
+archivo = st.sidebar.file_uploader('Cargar otro CSV (opcional)', type=['csv'])
 try:
-    datos = cargar(archivo if archivo is not None else ('Data(2).csv' if __import__('pathlib').Path('Data(2).csv').exists() else 'Data.csv'))
+    ruta = next((str(Path(x)) for x in ['Data.csv', 'Data(2).csv', 'Data(1).csv'] if Path(x).exists()), 'Data.csv')
+    datos = cargar(archivo if archivo is not None else ruta)
 except Exception as exc:
-    st.error(f'No se pudo cargar el CSV: {exc}')
-    st.info('Coloca Data(2).csv o Data.csv junto a app_metales_corregido.py, o carga el archivo desde la barra lateral.')
+    st.error(f'No se pudo abrir el CSV: {exc}')
+    st.info('Coloca Data.csv en la misma carpeta que este programa, o cárgalo desde la barra lateral.')
     st.stop()
 
-pagina = st.sidebar.radio('Sección', [
-    '🏠 Panorama del mercado', '🔎 Explorar un metal', '🔮 Pronósticos',
-    '⚖️ Riesgo y comparación', '📊 Sustento estadístico'
+pagina = st.sidebar.radio('¿Qué quieres conocer?', [
+    '🏠 Resumen para inversionistas',
+    '📈 Conoce cada metal',
+    '🔮 ¿Qué puede pasar?',
+    '⚖️ Compara las alternativas',
+    '🎓 Cómo hicimos el análisis'
 ])
-metal = st.sidebar.selectbox('Metal', list(COLUMNAS))
-horizonte = st.sidebar.select_slider('Meses a pronosticar', options=[1, 3, 6, 9, 12], value=6)
-ventana = st.sidebar.slider('Ventana de promedios móviles (meses)', 3, 18, 12)
+metal = st.sidebar.selectbox('Metal que quieres analizar', list(COLUMNAS))
+ventana = 12
 s = serie_metal(datos, metal)
 mercado = tabla_mercado(datos)
-if s.empty:
-    st.error(f'No hay suficientes datos para {metal}.')
-    st.stop()
+st.sidebar.caption(f'Datos hasta {datos.index.max():%m/%Y} · Precios históricos, no cotizaciones en vivo')
 
-st.sidebar.caption(f'Último mes del archivo: {datos.index.max():%m/%Y}')
-st.sidebar.caption('Si existen meses internos sin dato, se interpolan para el análisis. Verifica su cantidad en Sustento estadístico.')
 
-if pagina == '🏠 Panorama del mercado':
-    st.title('⛏️ Panorama del mercado de metales')
-    st.write('Compare el comportamiento de cinco metales antes de estudiar una posible inversión.')
-    cols = st.columns(5)
-    for i, m in enumerate(COLUMNAS):
-        fila = mercado.loc[mercado.Metal == m]
-        if not fila.empty:
-            r = fila.iloc[0]
-            cols[i].metric(m, f"US$ {r['Precio (US$)']:,.2f}", f"{r['Cambio mensual (%)']:+.2f}%")
-            cols[i].caption(UNIDADES[m])
-    st.subheader('¿Qué metal ha aumentado más en términos porcentuales?')
-    periodo = st.selectbox('Periodo', ['12 meses', '5 años', 'Todo el historial'])
-    cantidad = {'12 meses': 12, '5 años': 60, 'Todo el historial': None}[periodo]
+def lenguaje_cambio(x):
+    if x > 2:
+        return 'subida'
+    if x < -2:
+        return 'bajada'
+    return 'estabilidad aproximada'
+
+
+def calcular_resumen(s):
+    tabla, pred = evaluar(s, ventana)
+    if tabla.empty:
+        return None
+    mejor = str(tabla.iloc[0]['Modelo'])
+    futuro = pronosticar(mejor, s, 12, ventana)
+    ultimo = float(s.iloc[-1])
+    return {'modelo': mejor, 'error': float(tabla.iloc[0]['MAPE (%)']),
+            'tabla': tabla, 'historicas': pred, 'futuro': futuro,
+            'variaciones': {h: (float(futuro[h-1]) / ultimo - 1)*100 for h in (3,6,12)}}
+
+
+@st.cache_data(show_spinner=False)
+def resultados_metal(serie):
+    return calcular_resumen(serie)
+
+
+def figura_indice(meses):
     fig = go.Figure()
     for m in COLUMNAS:
-        sm = serie_metal(datos, m)
-        if cantidad:
-            sm = sm.tail(cantidad)
-        if len(sm) >= 2 and sm.iloc[0] != 0:
-            fig.add_trace(go.Scatter(x=sm.index, y=100 * sm / sm.iloc[0], name=m, mode='lines'))
-    fig.add_hline(y=100, line_dash='dash')
-    fig.update_layout(yaxis_title='Índice base 100 (sin unidad)', template='plotly_white', height=480)
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption('Índice 120 = aumento de 20% desde el inicio del periodo elegido. No iguala los precios ni sus unidades.')
-    st.dataframe(mercado.style.format({'Precio (US$)': '{:,.2f}', 'Cambio mensual (%)': '{:+.2f}',
-                                       'Cambio 6 meses (%)': '{:+.2f}', 'Volatilidad mensual (%)': '{:.2f}'}),
-                 hide_index=True, use_container_width=True)
+        sm = serie_metal(datos, m).tail(meses)
+        if len(sm) >= 2 and sm.iloc[0] > 0:
+            fig.add_trace(go.Scatter(x=sm.index, y=100*sm/sm.iloc[0], name=m, mode='lines'))
+    fig.add_hline(y=100, line_dash='dash', line_color='gray')
+    fig.update_layout(title='¿Cuánto cambió el precio de cada metal?',
+                      yaxis_title='Índice: todos empiezan en 100',
+                      xaxis_title='Mes', hovermode='x unified', height=440,
+                      margin=dict(t=55,b=35))
+    return fig
 
-elif pagina == '🔎 Explorar un metal':
-    st.title(f'🔎 Conozcamos el {metal.lower()}')
-    precio, mensual, semestral, vol = indicadores(s)
-    c1, c2, c3 = st.columns(3)
-    c1.metric('Último precio observado', f'US$ {precio:,.2f}', UNIDADES[metal])
-    c2.metric('Variación mensual', f'{mensual:+.2f}%')
-    c3.metric('Variación de 6 meses', f'{semestral:+.2f}%')
-    ultimos = st.selectbox('Historia visible', [12, 36, 60, 120, len(s)], index=3 if len(s) >= 120 else 0)
-    st.plotly_chart(grafico_linea(s, f'Precio histórico del {metal.lower()}', UNIDADES[metal], ultimos), use_container_width=True)
-    texto = 'al alza' if semestral > 2 else 'a la baja' if semestral < -2 else 'relativamente estable'
-    st.info(f'En los últimos seis meses el precio ha estado {texto}. Su volatilidad mensual histórica es {vol:.2f}%.')
 
-elif pagina == '🔮 Pronósticos':
-    st.title(f'🔮 Pronóstico del {metal.lower()}')
-    st.write('Los cuatro métodos se evalúan con pronósticos de un mes adelante, actualizando el origen de predicción sin mirar el futuro.')
-    with st.spinner('Calculando modelos...'):
-        tabla, predicciones = evaluar(s, ventana)
-    if tabla.empty:
-        st.warning('No hay suficientes datos para comparar los cuatro métodos.')
+if pagina == '🏠 Resumen para inversionistas':
+    st.title('⛏️ ¿En qué metal podríamos invertir?')
+    st.write('Conoce los precios, identifica los movimientos y compara las perspectivas de cinco metales.')
+    st.info('Los datos llegan hasta agosto de 2026. No son precios en vivo ni promesas de ganancias.')
+    cols = st.columns(5)
+    for i, m in enumerate(COLUMNAS):
+        r = mercado.loc[mercado['Metal'] == m].iloc[0]
+        cols[i].metric(m, f"US$ {r['Precio (US$)']:,.2f}", f"{r['Cambio mensual (%)']:+.1f}% último mes")
+        cols[i].caption(UNIDADES[m])
+    st.subheader('¿Cuál ha subido más?')
+    periodo = st.radio('Compara los últimos:', ['12 meses', '5 años'], horizontal=True)
+    st.plotly_chart(figura_indice(12 if periodo == '12 meses' else 60), use_container_width=True)
+    st.caption('Todos empiezan en 100 para comparar porcentajes. No significa que cuesten lo mismo.')
+    st.subheader('Lo que deberías saber antes de elegir')
+    a,b,c = st.columns(3)
+    a.info('📈 **Crecimiento pasado**: cuánto cambió el precio en el periodo.')
+    b.info('🌊 **Fluctuaciones**: cuánto se movió el precio de un mes a otro.')
+    c.info('🔮 **Pronóstico**: escenario estimado, que puede fallar.')
+    st.write('**Siguiente paso:** entra a «¿Qué puede pasar?» para consultar las proyecciones.')
+
+elif pagina == '📈 Conoce cada metal':
+    st.title(f'📈 ¿Cómo se ha comportado el {metal.lower()}?')
+    precio, mes, seis, vol = indicadores(s)
+    a,b,c = st.columns(3)
+    a.metric('Último precio registrado', f'US$ {precio:,.2f}')
+    b.metric('Cambio en el último mes', f'{mes:+.2f}%')
+    c.metric('Cambio en seis meses', f'{seis:+.2f}%')
+    st.caption(f'Precio en {UNIDADES[metal]}. Fecha del último registro: {s.index[-1]:%m/%Y}.')
+    lapso = st.radio('¿Qué periodo deseas ver?', ['Últimos 12 meses','Últimos 5 años','Todo el historial'], horizontal=True)
+    n = {'Últimos 12 meses':12,'Últimos 5 años':60,'Todo el historial':len(s)}[lapso]
+    st.plotly_chart(grafico_linea(s, f'Historia del precio del {metal.lower()}', UNIDADES[metal], n), use_container_width=True)
+    st.success(f'En los últimos seis meses hubo una {lenguaje_cambio(seis)} del precio ({seis:+.1f}%).')
+    st.write('**¿Qué debe considerar un inversionista?** Las subidas anteriores no garantizan que el precio siga aumentando. También puede caer.')
+
+elif pagina == '🔮 ¿Qué puede pasar?':
+    st.title(f'🔮 ¿Qué podría pasar con el {metal.lower()}?')
+    st.write('Estimamos cómo podría cambiar su precio usando los métodos aprendidos en clase.')
+    with st.spinner('Calculando pronósticos históricos y futuros...'):
+        r = resultados_metal(s)
+    if r is None:
+        st.warning('No hay datos suficientes para elaborar un pronóstico.')
         st.stop()
-    st.dataframe(tabla.style.format({'MAE': '{:,.3f}', 'RMSE': '{:,.3f}', 'MAPE (%)': '{:.2f}'}),
-                 hide_index=True, use_container_width=True)
-    ganador = tabla.iloc[0]['Modelo']
-    st.success(f'Menor RMSE de evaluación: {ganador}')
+    st.success(f"El método que mejor funcionó en las pruebas históricas fue **{r['modelo']}**. En pronósticos de un mes, su error porcentual promedio fue **{r['error']:.2f}%**.")
+    st.subheader('¿Cuánto podría subir o bajar?')
+    cols = st.columns(3)
+    for col,h in zip(cols,(3,6,12)):
+        variacion = r['variaciones'][h]
+        precio_fut = r['futuro'][h-1]
+        col.metric(f'En {h} meses', f'{variacion:+.2f}%', f'US$ {precio_fut:,.2f} estimados', delta_color='off')
+        col.caption(f'Mes estimado: {(s.index[-1]+pd.DateOffset(months=h)):%m/%Y}')
+    h = st.select_slider('Muestra el escenario hasta:', options=[3,6,12], value=6, format_func=lambda x:f'{x} meses')
+    fechas = pd.date_range(s.index[-1]+pd.offsets.MonthBegin(1), periods=h, freq='MS')
     fig = go.Figure()
-    fig.add_trace(go.Scatter(x=s.tail(36).index, y=s.tail(36), name='Precio observado'))
-    fig.add_trace(go.Scatter(x=predicciones[ganador].index, y=predicciones[ganador],
-                             name='Predicción histórica (1 mes)', line={'dash': 'dash'}))
-    fig.update_layout(title='Evaluación: observado frente a estimado', template='plotly_white', yaxis_title=UNIDADES[metal])
+    fig.add_trace(go.Scatter(x=s.tail(36).index, y=s.tail(36).values, name='Precio que ya conocemos', mode='lines', line=dict(width=3)))
+    fig.add_trace(go.Scatter(x=[s.index[-1],*fechas], y=[s.iloc[-1],*r['futuro'][:h]],
+                             name='Lo que estima el modelo', mode='lines+markers', line=dict(dash='dash',width=3)))
+    fig.update_layout(title='Precio pasado y escenario futuro', yaxis_title=UNIDADES[metal],
+                      xaxis_title='Mes', hovermode='x unified', height=440)
     st.plotly_chart(fig, use_container_width=True)
-    futuro = pronosticar(ganador, s, horizonte, ventana)
-    fechas = pd.date_range(s.index[-1] + pd.offsets.MonthBegin(1), periods=horizonte, freq='MS')
-    proyeccion = pd.DataFrame({'Fecha': fechas, 'Pronóstico': futuro})
-    cambio = (futuro[-1] / s.iloc[-1] - 1) * 100 if s.iloc[-1] != 0 else np.nan
-    c1, c2, c3 = st.columns(3)
-    c1.metric('Último precio', f'US$ {s.iloc[-1]:,.2f}')
-    c2.metric(f'Precio proyectado a {horizonte} meses', f'US$ {futuro[-1]:,.2f}')
-    c3.metric('Cambio proyectado', f'{cambio:+.2f}%')
-    fig = go.Figure()
-    fig.add_trace(go.Scatter(x=s.tail(36).index, y=s.tail(36), name='Histórico'))
-    fig.add_trace(go.Scatter(x=[s.index[-1], *fechas], y=[s.iloc[-1], *futuro],
-                             name='Proyección', line={'dash': 'dash', 'width': 3}))
-    fig.update_layout(title='Escenario de precios futuros', yaxis_title=UNIDADES[metal], template='plotly_white')
-    st.plotly_chart(fig, use_container_width=True)
-    st.dataframe(proyeccion.style.format({'Pronóstico': '{:,.2f}'}), hide_index=True)
-    st.download_button('Descargar pronóstico CSV', proyeccion.to_csv(index=False).encode('utf-8-sig'),
-                       file_name=f'pronostico_{metal.lower()}.csv', mime='text/csv')
-    st.warning('La evaluación mide pronósticos a un mes; la precisión a 3–12 meses puede ser diferente. No se garantizan ganancias.')
+    st.info(f"Según {r['modelo']}, el cambio estimado a {h} meses es {r['variaciones'][h]:+.2f}%. Es un escenario, no una ganancia asegurada.")
+    st.warning('El error histórico mostrado corresponde a pronósticos de **un mes**, no mide directamente la precisión de los escenarios a 3, 6 o 12 meses. No se muestran intervalos de incertidumbre.')
+    with st.expander('¿Qué tan bien funcionó el modelo con meses ya conocidos?'):
+        pred = r['historicas'][r['modelo']]
+        f = go.Figure()
+        f.add_trace(go.Scatter(x=s.tail(24).index,y=s.tail(24),name='Precio real'))
+        f.add_trace(go.Scatter(x=pred.index,y=pred.values,name='Precio que se había estimado',line=dict(dash='dash')))
+        f.update_layout(yaxis_title=UNIDADES[metal],height=350)
+        st.plotly_chart(f,use_container_width=True)
+        st.caption('Cuando ambas líneas se acercan, el modelo se aproximó mejor al precio real.')
 
-elif pagina == '⚖️ Riesgo y comparación':
-    st.title('⚖️ Riesgo y comparación')
-    st.write('La volatilidad mide cuánto fluctúan históricamente las variaciones porcentuales mensuales de cada metal.')
-    fig = px.bar(mercado.sort_values('Volatilidad mensual (%)'), x='Volatilidad mensual (%)', y='Metal',
-                 orientation='h', text='Volatilidad mensual (%)', title='Volatilidad histórica mensual')
-    fig.update_traces(texttemplate='%{text:.2f}%')
-    fig.update_layout(template='plotly_white')
-    st.plotly_chart(fig, use_container_width=True)
-    fig = px.scatter(mercado, x='Volatilidad mensual (%)', y='Cambio 6 meses (%)', text='Metal',
-                     title='Crecimiento reciente frente a volatilidad histórica')
-    fig.update_traces(textposition='top center', marker={'size': 13})
-    fig.update_layout(template='plotly_white')
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption('Un mayor crecimiento pasado no implica mayor rentabilidad futura. La volatilidad no mide todos los riesgos de invertir.')
+elif pagina == '⚖️ Compara las alternativas':
+    st.title('⚖️ Compara los cinco metales')
+    st.write('Mira sus posibles cambios de precio y las fluctuaciones que tuvieron en el pasado.')
+    registros=[]
+    with st.spinner('Comparando los cinco metales...'):
+        for m in COLUMNAS:
+            sm=serie_metal(datos,m)
+            rr=resultados_metal(sm)
+            if rr:
+                registros.append({'Metal':m,'Cambio previsto a 3 meses (%)':rr['variaciones'][3],
+                                  'Cambio previsto a 6 meses (%)':rr['variaciones'][6],
+                                  'Cambio previsto a 12 meses (%)':rr['variaciones'][12],
+                                  'Fluctuación histórica mensual (%)':float(sm.pct_change(fill_method=None).std()*100),
+                                  'Modelo utilizado':rr['modelo'], 'Error histórico a 1 mes (%)':rr['error']})
+    tabla=pd.DataFrame(registros)
+    plazo=st.radio('¿Cuándo piensas comparar?', ['3 meses','6 meses','12 meses'],index=1,horizontal=True)
+    columna=f'Cambio previsto a {plazo} (%)'
+    orden=tabla.sort_values(columna)
+    fig=go.Figure(go.Bar(x=orden[columna],y=orden['Metal'],orientation='h',text=[f'{v:+.1f}%' for v in orden[columna]],textposition='outside'))
+    fig.add_vline(x=0,line_color='gray')
+    fig.update_layout(title=f'Cambios de precio estimados a {plazo}',xaxis_title='Cambio proyectado (%)',height=400)
+    st.plotly_chart(fig,use_container_width=True)
+    st.caption('Barras a la derecha de cero: aumento estimado; a la izquierda: disminución estimada.')
+    st.subheader('¿Cuáles han tenido más altibajos?')
+    f=px.bar(tabla.sort_values('Fluctuación histórica mensual (%)'),x='Fluctuación histórica mensual (%)',y='Metal',orientation='h',
+             title='Variación de los cambios mensuales: mayor barra = más fluctuaciones')
+    f.update_layout(height=390)
+    st.plotly_chart(f,use_container_width=True)
+    st.info('Una subida proyectada alta puede venir acompañada de fuertes fluctuaciones. Esta comparación no incluye comisiones, impuestos ni todos los riesgos de inversión.')
+    with st.expander('Ver cifras y descargar comparación'):
+        st.dataframe(tabla.style.format({c:'{:+.2f}%' for c in tabla.columns if '(%)' in c}),hide_index=True,use_container_width=True)
+        st.download_button('Descargar comparación CSV',tabla.to_csv(index=False).encode('utf-8-sig'),'comparacion_metales.csv','text/csv')
 
 else:
-    st.title('📊 Sustento estadístico')
-    st.subheader('1. Descomposición clásica aditiva y multiplicativa')
-    if len(s) >= 24:
-        tipo = st.radio('Tipo', ['Aditiva', 'Multiplicativa'], horizontal=True)
-        if tipo == 'Multiplicativa' and (s <= 0).any():
-            st.error('La descomposición multiplicativa requiere precios positivos.')
-        else:
-            des = seasonal_decompose(s, model='additive' if tipo == 'Aditiva' else 'multiplicative',
-                                     period=12, extrapolate_trend='freq')
-            componentes = {'Original': des.observed, 'Tendencia': des.trend,
-                           'Estacionalidad': des.seasonal, 'Residual': des.resid}
-            seleccion = st.selectbox('Componente', list(componentes))
-            st.plotly_chart(grafico_linea(componentes[seleccion], f'{tipo}: {seleccion}',
-                                           UNIDADES[metal] if tipo == 'Aditiva' or seleccion == 'Original' else 'Índice / factor', len(s)),
-                            use_container_width=True)
-            st.write('Aditiva: Y = T + E + R' if tipo == 'Aditiva' else 'Multiplicativa: Y = T × E × R')
-            st.download_button('Descargar componentes', pd.DataFrame(componentes).to_csv().encode('utf-8-sig'),
-                               file_name=f'descomposicion_{metal.lower()}.csv', mime='text/csv')
+    st.title('🎓 ¿Cómo obtuvimos estos resultados?')
+    st.write('Esta sección es para explicar los procedimientos estudiados en clase. No es necesario mostrarla al público general.')
+    st.subheader(f'Descomposición clásica del {metal.lower()}')
+    tipo=st.radio('Tipo de descomposición',['Aditiva','Multiplicativa'],horizontal=True)
+    if len(s)>=24 and (tipo=='Aditiva' or (s>0).all()):
+        des=seasonal_decompose(s,model='additive' if tipo=='Aditiva' else 'multiplicative',period=12,extrapolate_trend='freq')
+        componentes={'Precio observado':des.observed,'Tendencia':des.trend,'Estacionalidad':des.seasonal,'Residuo':des.resid}
+        componente=st.selectbox('Componente a visualizar',list(componentes))
+        unidad=UNIDADES[metal] if componente in ['Precio observado','Tendencia'] or tipo=='Aditiva' else 'Factor (sin unidad)'
+        st.plotly_chart(grafico_linea(componentes[componente],f'{tipo}: {componente}',unidad,len(s)),use_container_width=True)
+        st.latex(r'Y_t=T_t+E_t+R_t' if tipo=='Aditiva' else r'Y_t=T_t\times E_t\times R_t')
+        st.download_button('Descargar componentes',pd.DataFrame(componentes).to_csv().encode('utf-8-sig'),'componentes.csv','text/csv')
     else:
-        st.warning('La descomposición mensual necesita al menos 24 meses.')
-    st.subheader('2. Promedios móviles simple y doble')
-    pm1 = s.rolling(ventana).mean()
-    pm2 = pm1.rolling(ventana).mean()
-    fig = go.Figure()
-    for nombre, valores in [('Precio observado', s), ('PM simple', pm1), ('PM doble', pm2)]:
-        fig.add_trace(go.Scatter(x=valores.tail(120).index, y=valores.tail(120), name=nombre))
-    fig.update_layout(template='plotly_white', yaxis_title=UNIDADES[metal])
-    st.plotly_chart(fig, use_container_width=True)
-    st.caption('El promedio móvil doble aplica un segundo promedio móvil sobre el primero; para pronosticar se usa la extrapolación de Brown.')
-    st.subheader('3. Comparación: PM simple, PM doble, SES y Holt')
-    tabla, _ = evaluar(s, ventana)
-    if not tabla.empty:
-        st.dataframe(tabla.style.format({'MAE': '{:.3f}', 'RMSE': '{:.3f}', 'MAPE (%)': '{:.2f}'}),
-                     hide_index=True, use_container_width=True)
-    st.caption(f'Meses internos sin precio original para {metal}: '
-               f'{datos[metal].loc[datos[metal].first_valid_index():datos[metal].last_valid_index()].isna().sum()} '
-               '(interpolados solamente para el análisis).')
-    st.info('MAE y RMSE están en la unidad de precio del metal; MAPE está en porcentaje. '
-            'La descomposición se muestra como análisis descriptivo y no participa en la competencia de pronósticos.')
+        st.warning('No hay suficientes meses o existen valores no positivos para esta descomposición.')
+    st.subheader('Promedios móviles')
+    pm1=s.rolling(ventana).mean()
+    pm2=pm1.rolling(ventana).mean()
+    f=go.Figure()
+    for nombre,serie in [('Precio real',s),('Promedio móvil simple',pm1),('Promedio móvil doble',pm2)]:
+        f.add_trace(go.Scatter(x=serie.tail(60).index,y=serie.tail(60).values,name=nombre))
+    f.update_layout(yaxis_title=UNIDADES[metal],height=390)
+    st.plotly_chart(f,use_container_width=True)
+    st.caption('Se emplean ventanas de 12 meses. Para proyectar con el promedio móvil doble se usa la extrapolación de Brown.')
+    st.subheader('Comparación de métodos estudiados')
+    r=resultados_metal(s)
+    if r:
+        st.dataframe(r['tabla'].style.format({'MAE':'{:,.2f}','RMSE':'{:,.2f}','MAPE (%)':'{:.2f}%'}),hide_index=True,use_container_width=True)
+        st.write('**MAE:** error absoluto promedio. **RMSE:** penaliza más los errores grandes. **MAPE:** error porcentual promedio.')
+        st.caption('Evaluación histórica de un mes adelante, actualizando el origen de pronóstico. Se elige el menor RMSE.')
+    faltantes=datos[metal].loc[datos[metal].first_valid_index():datos[metal].last_valid_index()].isna().sum()
+    st.caption(f'Meses internos sin precio original: {faltantes}. Si existen, se interpolan para el análisis.')
 
 st.divider()
-st.caption('Proyecto académico. Los pronósticos son estimaciones estadísticas, no recomendaciones financieras personalizadas.')
+st.caption('Proyecto académico · Precios históricos hasta la fecha indicada · Los pronósticos no son recomendaciones financieras personalizadas.')
