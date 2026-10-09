@@ -16,7 +16,7 @@ COLUMNAS = {
     'Plomo': 'Plomo (US$/TM)'
 }
 UNIDADES = {m: ('US$/TM' if m in ['Cobre', 'Zinc', 'Plomo'] else 'US$/onza troy') for m in COLUMNAS}
-METODOS = ['Promedio mÃ³vil simple', 'Promedio mÃ³vil doble', 'SES', 'Holt']
+METODOS = ['Promedio movil simple', 'Promedio movil doble', 'SES', 'Holt']
 
 @st.cache_data
 def cargar(archivo):
@@ -25,10 +25,10 @@ def cargar(archivo):
     # Normalizar el encabezado de fecha, si fuese necesario.
     primera = df.columns[0]
     df = df.rename(columns={primera: 'AÃ±oMes'})
-    faltan = [x for x in ['AÃ±oMes', *COLUMNAS.values()] if x not in df.columns]
+    faltan = [x for x in ['AñoMes', *COLUMNAS.values()] if x not in df.columns]
     if faltan:
         raise ValueError(f'Faltan columnas: {faltan}. Disponibles: {list(df.columns)}')
-    p = df['AÃ±oMes'].astype(str).str.strip().str.upper().str.extract(r'^(\d{4})M(0?[1-9]|1[0-2])$')
+    p = df['AñoMes'].astype(str).str.strip().str.upper().str.extract(r'^(\d{4})M(0?[1-9]|1[0-2])$')
     df['Fecha'] = pd.to_datetime(p[0] + '-' + p[1].str.zfill(2) + '-01', errors='coerce')
     for metal, col in COLUMNAS.items():
         df[metal] = pd.to_numeric(df[col], errors='coerce')
