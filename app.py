@@ -287,6 +287,56 @@ elif pagina == '🔮 ¿Qué puede pasar?':
     st.plotly_chart(fig, use_container_width=True)
     st.info(f"Según {r['modelo']}, el cambio estimado a {h} meses es {r['variaciones'][h]:+.2f}%. Es un escenario, no una ganancia asegurada.")
     st.warning('El error histórico mostrado corresponde a pronósticos de **un mes**, no mide directamente la precisión de los escenarios a 3, 6 o 12 meses. No se muestran intervalos de incertidumbre.')
+    with st.expander('📊 Comparar los pronósticos de los cuatro modelos', expanded=False):
+        st.write('Cada línea representa un método diferente. Se calculan todos con la misma información histórica y el mismo horizonte. La línea destacada corresponde al método con menor RMSE en la evaluación histórica a un mes.')
+        modelos_futuros = {}
+        fechas_comparacion = pd.date_range(s.index[-1] + pd.offsets.MonthBegin(1), periods=h, freq='MS')
+        grafico_comparacion = go.Figure()
+        grafico_comparacion.add_trace(go.Scatter(
+            x=s.tail(24).index, y=s.tail(24).values,
+            name='Precio real', mode='lines', line=dict(color='#f0f0f0', width=3)))
+        colores = {'Promedio móvil simple': '#f4a261', 'Promedio móvil doble': '#9b5de5',
+                   'SES': '#00b4d8', 'Holt': '#2a9d8f'}
+        for metodo in METODOS:
+            try:
+                valores = pronosticar(metodo, s, h, ventana)
+                modelos_futuros[metodo] = valores
+                es_ganador = metodo == r['modelo']
+                grafico_comparacion.add_trace(go.Scatter(
+                    x=[s.index[-1], *fechas_comparacion],
+                    y=[float(s.iloc[-1]), *valores],
+                    name=metodo + (' (menor RMSE)' if es_ganador else ''),
+                    mode='lines+markers',
+                    line=dict(color=colores[metodo], width=4 if es_ganador else 2,
+                              dash='solid' if es_ganador else 'dash'),
+                    marker=dict(size=6 if es_ganador else 4)))
+            except (ValueError, ArithmeticError, np.linalg.LinAlgError) as exc:
+                st.caption(f'No fue posible calcular {metodo}: {exc}')
+        grafico_comparacion.update_layout(
+            title=f'Cuatro escenarios de precio del {metal.lower()} a {h} meses',
+            xaxis_title='Mes', yaxis_title=UNIDADES[metal],
+            hovermode='x unified', height=470,
+            legend=dict(orientation='h', y=-0.25))
+        st.plotly_chart(grafico_comparacion, use_container_width=True)
+        if modelos_futuros:
+            ultimo_real = float(s.iloc[-1])
+            resumen_modelos = pd.DataFrame([
+                {'Método': metodo,
+                 f'Precio en {h} meses ({UNIDADES[metal]})': float(valores[-1]),
+                 'Cambio desde último precio real (%)': (float(valores[-1]) / ultimo_real - 1) * 100,
+                 'RMSE histórico (1 mes)': float(r['tabla'].set_index('Modelo').loc[metodo, 'RMSE'])
+                     if metodo in r['tabla']['Modelo'].values else np.nan}
+                for metodo, valores in modelos_futuros.items()
+            ])
+            st.dataframe(resumen_modelos.style.format({
+                f'Precio en {h} meses ({UNIDADES[metal]})': 'US$ {:,.2f}',
+                'Cambio desde último precio real (%)': '{:+.2f}%',
+                'RMSE histórico (1 mes)': '{:,.2f}'
+            }), hide_index=True, use_container_width=True)
+            st.download_button('Descargar comparación de los cuatro métodos',
+                resumen_modelos.to_csv(index=False).encode('utf-8-sig'),
+                f'pronosticos_{metal.lower()}_{h}m.csv', 'text/csv')
+        st.caption('SES y el promedio móvil simple generan pronósticos horizontales; Holt y el promedio móvil doble pueden proyectar una tendencia. Los escenarios no son intervalos de confianza. El menor RMSE histórico a un mes no garantiza el menor error a 3, 6 o 12 meses.')
     with st.expander('¿Qué tan bien funcionó el modelo con meses ya conocidos?'):
         pred = r['historicas'][r['modelo']]
         f = go.Figure()
