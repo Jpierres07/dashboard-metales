@@ -142,7 +142,7 @@ except Exception as exc:
     st.stop()
 
 pagina = st.sidebar.radio('¿Qué quieres conocer?', [
-    '🏠 Resumen para inversionistas',
+    '🏠 Resumen',
     '📈 Conoce cada metal',
     '🔮 ¿Qué puede pasar?',
     '⚖️ Riesgos y simulador',
