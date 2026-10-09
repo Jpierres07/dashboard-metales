@@ -142,12 +142,12 @@ except Exception as exc:
     st.stop()
 
 pagina = st.sidebar.radio('¿Qué quieres conocer?', [
-    '🏠 Resumen para inversionistas',
+    '🏠 Resumen',
     '📈 Conoce cada metal',
     '🔮 ¿Qué puede pasar?',
     '⚖️ Riesgos y simulador',
     '🎯 Nuestra recomendación',
-    '🎓 Análisis académico'
+    '🎓 Análisis'
 ])
 metal = st.sidebar.selectbox('Metal que quieres analizar', list(COLUMNAS))
 ventana = 12
