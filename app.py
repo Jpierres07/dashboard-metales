@@ -452,6 +452,74 @@ elif pagina == '⚖️ Riesgos y simulador':
         st.warning('Un patrón histórico no indica cuándo comprar con seguridad. Hay que considerar precio actual, costos, riesgo y contexto económico; estos patrones no se han validado como estrategia de inversión.')
     else:
         st.info('No hay datos suficientes para analizar patrones mensuales.')
+    st.subheader('📈 ¿Habría funcionado comprar y vender en determinados meses?')
+    st.write('Simulamos operaciones con precios de cierre mensual históricos. El mes de compra y el de venta se fijan antes de observar los resultados de la prueba.')
+    meses_bt = ['Enero', 'Febrero', 'Marzo', 'Abril', 'Mayo', 'Junio', 'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre']
+    bt1, bt2, bt3 = st.columns(3)
+    metal_bt = bt1.selectbox('Metal de la estrategia', list(COLUMNAS), index=list(COLUMNAS).index(metal), key='bt_metal')
+    compra_bt = bt2.selectbox('Comprar al cierre de', range(1, 13), index=10, format_func=lambda n: meses_bt[n-1], key='bt_compra')
+    venta_bt = bt3.selectbox('Vender al cierre de', range(1, 13), index=2, format_func=lambda n: meses_bt[n-1], key='bt_venta')
+    bt4, bt5, bt6 = st.columns(3)
+    anos_bt = bt4.selectbox('Historia a considerar', [10, 15, 20], index=1, format_func=lambda n: f'{n} años', key='bt_anos')
+    capital_bt = bt5.number_input('Capital por operación (US$)', min_value=100.0, value=10000.0, step=500.0, key='bt_capital')
+    costo_bt = bt6.number_input('Costos totales de compra y venta (%)', min_value=0.0, max_value=20.0, value=1.0, step=0.1, key='bt_costo')
+    if compra_bt == venta_bt:
+        st.info('Selecciona dos meses diferentes. Las compras y ventas se realizan al cierre de cada mes.')
+    else:
+        precios_bt = serie_metal(datos, metal_bt).dropna()
+        if not precios_bt.empty:
+            corte_bt = precios_bt.index.max() - pd.DateOffset(years=anos_bt)
+            precios_bt = precios_bt.loc[precios_bt.index >= corte_bt]
+            precios_bt = precios_bt[precios_bt > 0]
+            precios_por_mes = {(fecha.year, fecha.month): float(valor) for fecha, valor in precios_bt.items()}
+            registros_bt = []
+            for anio in sorted(set(precios_bt.index.year)):
+                anio_venta = anio + (1 if venta_bt < compra_bt else 0)
+                precio_compra = precios_por_mes.get((anio, compra_bt))
+                precio_venta = precios_por_mes.get((anio_venta, venta_bt))
+                if precio_compra is None or precio_venta is None:
+                    continue
+                retorno_bruto = 100 * (precio_venta / precio_compra - 1)
+                # Costo porcentual total aplicado al valor de salida de la operación.
+                retorno_neto = 100 * ((precio_venta / precio_compra) * (1 - costo_bt / 100) - 1)
+                registros_bt.append({
+                    'Compra': f'{meses_bt[compra_bt-1]} {anio}',
+                    'Venta': f'{meses_bt[venta_bt-1]} {anio_venta}',
+                    'Año de compra': anio,
+                    'Precio compra': precio_compra,
+                    'Precio venta': precio_venta,
+                    'Rentabilidad bruta (%)': retorno_bruto,
+                    'Rentabilidad neta (%)': retorno_neto,
+                    'Resultado (US$)': capital_bt * retorno_neto / 100,
+                })
+            if len(registros_bt) < 6:
+                st.warning('No hay suficientes operaciones completas para esta combinación de meses y período.')
+            else:
+                bt_df = pd.DataFrame(registros_bt).sort_values('Año de compra')
+                # Últimos cinco años de compra con operación completa: prueba fuera de muestra.
+                anios_prueba = sorted(bt_df['Año de compra'].unique())[-5:]
+                bt_df['Fase'] = np.where(bt_df['Año de compra'].isin(anios_prueba), 'Prueba (últimos 5 años)', 'Exploración')
+                prueba_bt = bt_df[bt_df['Fase'] == 'Prueba (últimos 5 años)'].copy()
+                exploracion_bt = bt_df[bt_df['Fase'] == 'Exploración'].copy()
+                st.caption(f'Exploración: {len(exploracion_bt)} operaciones anteriores. Prueba: {len(prueba_bt)} operaciones recientes ({min(anios_prueba)}–{max(anios_prueba)}). Si elegiste los meses mirando la gráfica de toda la historia, esta prueba NO es independiente de esa elección.')
+                xbt, ybt, zbt = st.columns(3)
+                xbt.metric('Operaciones rentables (prueba)', f'{(prueba_bt["Rentabilidad neta (%)"] > 0).mean()*100:.0f}%')
+                ybt.metric('Rentabilidad neta promedio (prueba)', f'{prueba_bt["Rentabilidad neta (%)"].mean():+.2f}%')
+                zbt.metric('Ganancia/pérdida media por operación', f'US$ {prueba_bt["Resultado (US$)"].mean():+,.2f}')
+                fig_bt = px.bar(bt_df, x='Año de compra', y='Rentabilidad neta (%)', color='Fase',
+                    title=f'Compra en {meses_bt[compra_bt-1]} y venta en {meses_bt[venta_bt-1]}: resultados históricos netos',
+                    labels={'Año de compra': 'Año de compra', 'Rentabilidad neta (%)': 'Ganancia o pérdida neta (%)'})
+                fig_bt.add_hline(y=0, line_color='gray')
+                fig_bt.update_layout(height=400)
+                st.plotly_chart(fig_bt, use_container_width=True)
+                st.dataframe(bt_df[['Compra', 'Venta', 'Fase', 'Precio compra', 'Precio venta', 'Rentabilidad neta (%)', 'Resultado (US$)']].style.format({
+                    'Precio compra': 'US$ {:,.2f}', 'Precio venta': 'US$ {:,.2f}',
+                    'Rentabilidad neta (%)': '{:+.2f}%', 'Resultado (US$)': 'US$ {:+,.2f}'
+                }), use_container_width=True, hide_index=True)
+                st.download_button('Descargar operaciones históricas (CSV)', bt_df.to_csv(index=False).encode('utf-8-sig'),
+                    f'estrategia_mensual_{metal_bt.lower()}.csv', 'text/csv', key='bt_descarga')
+                st.caption('Se compra al cierre del mes elegido y se vende al cierre del mes indicado, incluso si es del año siguiente. Cada fila es una operación independiente con el mismo capital inicial; las ganancias no se reinvierten. El costo total se descuenta al vender. No se incluyen impuestos, financiación, tipo de cambio ni costos de almacenamiento. Los precios de referencia no equivalen necesariamente al precio ejecutable de un producto de inversión.')
+                st.warning('Los resultados son hipotéticos. La prueba solo puede considerarse verdaderamente fuera de muestra si los meses se eligieron sin observar los años reservados. No garantiza rentabilidades futuras ni demuestra que el patrón sea estable.')
     st.subheader('🧮 Simula una inversión')
     a,b,c=st.columns(3)
     capital=a.number_input('Capital en dólares (US$)',min_value=100.0,max_value=100000000.0,value=10000.0,step=500.0)
