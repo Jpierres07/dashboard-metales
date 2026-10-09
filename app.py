@@ -212,7 +212,6 @@ if pagina == '🏠 Resumen para inversionistas':
     a.info('📈 **Crecimiento pasado**: cuánto cambió el precio en el periodo.')
     b.info('🌊 **Fluctuaciones**: cuánto se movió el precio de un mes a otro.')
     c.info('🔮 **Pronóstico**: escenario estimado, que puede fallar.')
-    st.write('**Siguiente paso:** entra a «¿Qué puede pasar?» para consultar las proyecciones.')
 
 elif pagina == '📈 Conoce cada metal':
     st.title(f'📈 ¿Cómo se ha comportado el {metal.lower()}?')
@@ -331,4 +330,3 @@ else:
     st.caption(f'Meses internos sin precio original: {faltantes}. Si existen, se interpolan para el análisis.')
 
 st.divider()
-st.caption('Proyecto académico · Precios históricos hasta la fecha indicada · Los pronósticos no son recomendaciones financieras personalizadas.')
