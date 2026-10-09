@@ -340,8 +340,16 @@ elif pagina == '🔮 ¿Qué puede pasar?':
     with st.expander('¿Qué tan bien funcionaron los modelos con meses ya conocidos?'):
         st.write('Comparamos los precios reales con las predicciones hechas para cada mes utilizando solamente la información disponible hasta el mes anterior.')
         modo = st.radio('¿Qué deseas observar?',
-            ['Ver solo el mejor modelo', 'Comparar los cuatro modelos'],
+            ['Precio real + un modelo', 'Comparar los cuatro modelos'],
             horizontal=True, key=f'validacion_{metal}')
+        modelo_elegido = None
+        if modo == 'Precio real + un modelo':
+            modelo_elegido = st.selectbox(
+                'Selecciona el método para compararlo con el precio real',
+                METODOS,
+                index=METODOS.index(r['modelo']),
+                key=f'modelo_validacion_{metal}'
+            )
         fig_validacion = go.Figure()
         historicas = r['historicas']
         fechas_evaluadas = sorted(set().union(*(set(p.index) for p in historicas.values())))
@@ -354,7 +362,7 @@ elif pagina == '🔮 ¿Qué puede pasar?':
             'Promedio móvil doble': '#9b5de5',
             'SES': '#00b4d8', 'Holt': '#2a9d8f'
         }
-        visibles = [r['modelo']] if modo == 'Ver solo el mejor modelo' else METODOS
+        visibles = [modelo_elegido] if modelo_elegido else METODOS
         for metodo in visibles:
             if metodo not in historicas:
                 continue
@@ -388,7 +396,7 @@ elif pagina == '🔮 ¿Qué puede pasar?':
                 tabla_descarga.to_csv(index=False).encode('utf-8-sig'),
                 f'validacion_{metal.lower()}.csv', 'text/csv')
         else:
-            st.info(f"El método con menor RMSE fue {r['modelo']}, con un error porcentual promedio de {r['error']:.2f}% en predicciones a un mes.")
+            st.info(f"Estás comparando el precio real con {modelo_elegido}. El método con menor RMSE histórico fue {r['modelo']}, con un MAPE de {r['error']:.2f}% en predicciones a un mes.")
 
 elif pagina == '⚖️ Riesgos y simulador':
     st.title('⚖️ ¿Cuánto podría ganar o perder si cambia el precio?')
