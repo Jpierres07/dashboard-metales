@@ -337,14 +337,58 @@ elif pagina == '🔮 ¿Qué puede pasar?':
                 resumen_modelos.to_csv(index=False).encode('utf-8-sig'),
                 f'pronosticos_{metal.lower()}_{h}m.csv', 'text/csv')
         st.caption('SES y el promedio móvil simple generan pronósticos horizontales; Holt y el promedio móvil doble pueden proyectar una tendencia. Los escenarios no son intervalos de confianza. El menor RMSE histórico a un mes no garantiza el menor error a 3, 6 o 12 meses.')
-    with st.expander('¿Qué tan bien funcionó el modelo con meses ya conocidos?'):
-        pred = r['historicas'][r['modelo']]
-        f = go.Figure()
-        f.add_trace(go.Scatter(x=s.tail(24).index,y=s.tail(24),name='Precio real'))
-        f.add_trace(go.Scatter(x=pred.index,y=pred.values,name='Precio que se había estimado',line=dict(dash='dash')))
-        f.update_layout(yaxis_title=UNIDADES[metal],height=350)
-        st.plotly_chart(f,use_container_width=True)
-        st.caption('Cuando ambas líneas se acercan, el modelo se aproximó mejor al precio real.')
+    with st.expander('¿Qué tan bien funcionaron los modelos con meses ya conocidos?'):
+        st.write('Comparamos los precios reales con las predicciones hechas para cada mes utilizando solamente la información disponible hasta el mes anterior.')
+        modo = st.radio('¿Qué deseas observar?',
+            ['Ver solo el mejor modelo', 'Comparar los cuatro modelos'],
+            horizontal=True, key=f'validacion_{metal}')
+        fig_validacion = go.Figure()
+        historicas = r['historicas']
+        fechas_evaluadas = sorted(set().union(*(set(p.index) for p in historicas.values())))
+        reales = s.reindex(fechas_evaluadas)
+        fig_validacion.add_trace(go.Scatter(
+            x=reales.index, y=reales.values, name='Precio real',
+            mode='lines+markers', line=dict(color='#f0f0f0', width=4)))
+        colores_validacion = {
+            'Promedio móvil simple': '#f4a261',
+            'Promedio móvil doble': '#9b5de5',
+            'SES': '#00b4d8', 'Holt': '#2a9d8f'
+        }
+        visibles = [r['modelo']] if modo == 'Ver solo el mejor modelo' else METODOS
+        for metodo in visibles:
+            if metodo not in historicas:
+                continue
+            pred_hist = historicas[metodo]
+            ganador = metodo == r['modelo']
+            fig_validacion.add_trace(go.Scatter(
+                x=pred_hist.index, y=pred_hist.values,
+                name=metodo + (' (menor RMSE)' if ganador else ''),
+                mode='lines+markers',
+                line=dict(color=colores_validacion[metodo],
+                          width=3 if ganador else 2, dash='dash'),
+                marker=dict(size=6 if ganador else 4)))
+        fig_validacion.update_layout(
+            title='Predicciones históricas a un mes frente a precios reales',
+            xaxis_title='Mes', yaxis_title=UNIDADES[metal],
+            hovermode='x unified', height=430,
+            legend=dict(orientation='h', y=-0.25))
+        st.plotly_chart(fig_validacion, use_container_width=True)
+        st.caption('Cuanto más cerca está la predicción del precio real, menor fue el error de ese mes. Los cuatro métodos se evalúan en los mismos meses.')
+        if modo == 'Comparar los cuatro modelos':
+            st.write('**Resumen de precisión histórica (pronósticos a un mes)**')
+            st.dataframe(r['tabla'].style.format({
+                'MAE': '{:,.2f}', 'RMSE': '{:,.2f}', 'MAPE (%)': '{:.2f}%'
+            }), hide_index=True, use_container_width=True)
+            st.caption('MAE y RMSE se expresan en las unidades del precio del metal. MAPE es el error porcentual promedio. El menor RMSE identifica el modelo destacado.')
+            tabla_descarga = pd.DataFrame({'Fecha': reales.index, 'Precio real': reales.values})
+            for metodo in METODOS:
+                if metodo in historicas:
+                    tabla_descarga[metodo] = historicas[metodo].reindex(reales.index).values
+            st.download_button('Descargar validación de los cuatro modelos',
+                tabla_descarga.to_csv(index=False).encode('utf-8-sig'),
+                f'validacion_{metal.lower()}.csv', 'text/csv')
+        else:
+            st.info(f"El método con menor RMSE fue {r['modelo']}, con un error porcentual promedio de {r['error']:.2f}% en predicciones a un mes.")
 
 elif pagina == '⚖️ Riesgos y simulador':
     st.title('⚖️ ¿Cuánto podría ganar o perder si cambia el precio?')
